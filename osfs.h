@@ -45,8 +45,9 @@ struct osfs_sb_info {
 /**
  * Struct: osfs_dir_entry
  * Description: Directory entry structure.
+ * directories have asimple organization; a directory basically just contains a list of pairs.
  */
-struct osfs_dir_entry {
+struct osfs_dir_entry { // entry name, inode name pairs
     char filename[MAX_FILENAME_LEN]; // File name
     uint32_t inode_no;               // Corresponding inode number
 };

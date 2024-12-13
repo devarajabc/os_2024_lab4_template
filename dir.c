@@ -5,7 +5,7 @@
 
 /**
  * Function: osfs_lookup
- * Description: Looks up a file within a directory.
+ * Description: Looks up a file (dentry) within a directory.
  * Inputs:
  *   - dir: The inode of the directory to search in.
  *   - dentry: The dentry representing the file to look up.
@@ -16,11 +16,13 @@
  */
 static struct dentry *osfs_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags)
 {
+
+    // 1. goto parent dir
     struct osfs_sb_info *sb_info = dir->i_sb->s_fs_info;
     struct osfs_inode *parent_inode = dir->i_private;
-    void *dir_data_block;
-    struct osfs_dir_entry *dir_entries;
-    int dir_entry_count;
+    void *dir_data_block;//sector address
+    struct osfs_dir_entry *dir_entries;// entry:inode number pair
+    int dir_entry_count;//
     int i;
     struct inode *inode = NULL;
 
@@ -34,6 +36,8 @@ static struct dentry *osfs_lookup(struct inode *dir, struct dentry *dentry, unsi
     dir_entry_count = parent_inode->i_size / sizeof(struct osfs_dir_entry);
     dir_entries = (struct osfs_dir_entry *)dir_data_block;
 
+
+    //
     // Traverse the directory entries to find a matching filename
     for (i = 0; i < dir_entry_count; i++) {
         if (strlen(dir_entries[i].filename) == dentry->d_name.len &&
@@ -42,13 +46,13 @@ static struct dentry *osfs_lookup(struct inode *dir, struct dentry *dentry, unsi
             inode = osfs_iget(dir->i_sb, dir_entries[i].inode_no);
             if (IS_ERR(inode)) {
                 pr_err("osfs_lookup: Error getting inode %u\n", dir_entries[i].inode_no);
-                return ERR_CAST(inode);
+                return ERR_CAST(inode);// error
             }
-            return d_splice_alias(inode, dentry);
+            return d_splice_alias(inode, dentry);//A pointer to the dentry if the file is found.
         }
     }
 
-    return NULL;
+    return NULL;// Not found
 }
 
 /**
@@ -265,11 +269,23 @@ static int osfs_create(struct mnt_idmap *idmap, struct inode *dir, struct dentry
     struct inode *inode;
     int ret;
 
+    if (!parent_inode) 
+    {
+        pr_err("osfs_create: Invalid parent inode\n");
+        return -EINVAL;
+    }
     // Step2: Validate the file name length
+    if (dentry->d_name.len > MAX_FILENAME_LEN) 
+    {
+        pr_err("osfs_create: File name too long\n");
+        return -ENAMETOOLONG;
+    }
 
 
     // Step3: Allocate and initialize VFS & osfs inode
-    
+
+    inode = osfs_new_inode(dir, mode);
+
 
     osfs_inode = inode->i_private;
     if (!osfs_inode) {
@@ -284,6 +300,7 @@ static int osfs_create(struct mnt_idmap *idmap, struct inode *dir, struct dentry
 
     // Step4: Parent directory entry update for the new file
 
+    ret = osfs_add_dir_entry(dir, inode->i_ino, dentry->d_name.name, dentry->d_name.len);
     if (ret) {
         pr_err("osfs_create: Failed to add directory entry\n");
         iput(inode);
@@ -292,9 +309,13 @@ static int osfs_create(struct mnt_idmap *idmap, struct inode *dir, struct dentry
 
     // Step 5: Update the parent directory's metadata 
     
+    parent_inode->i_size += sizeof(struct osfs_dir_entry);
+    // parent_inode->i_blocks += 1; // assuming one block per entry
+    dir->__i_ctime = dir->__i_mtime = current_time(dir);
     
     // Step 6: Bind the inode to the VFS dentry
 
+    d_instantiate(dentry, inode);
     pr_info("osfs_create: File '%.*s' created with inode %lu\n",
             (int)dentry->d_name.len, dentry->d_name.name, inode->i_ino);
 
